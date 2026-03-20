@@ -30,7 +30,8 @@
       <h1 class="hero-title">Configure Capture Session</h1>
       <p class="hero-sub">Enter the number of network-parameter samples to capture for your ML dataset.</p>
       <div class="setup-form">
-        <input  id="targetInput" type="number" min="1" placeholder="e.g. 500" class="target-input" />
+        <input id="targetInput" type="number" min="1" placeholder="Target samples (e.g. 500)" class="target-input" />
+        <input id="windowSizeInput" type="number" min="1" step="1" placeholder="Window Size (pkts) e.g. 50" class="target-input" />
         <button id="startBtn" class="btn btn-primary" onclick="startSession()">
           <span class="btn-icon">▶</span> Start Capture
         </button>

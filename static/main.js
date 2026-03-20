@@ -85,14 +85,18 @@ function updateProgress(current, target, active) {
 
 // ─── Session Control ───────────────────────────────────
 async function startSession() {
-  const raw = el('targetInput').value.trim();
-  const n   = parseInt(raw, 10);
-  if (!n || n <= 0) { el('sessionHint').textContent = '⚠ Please enter a valid positive number.'; return; }
+  const rawTarget = el('targetInput').value.trim();
+  const n = parseInt(rawTarget, 10);
+  if (!n || n <= 0) { el('sessionHint').textContent = '⚠ Please enter a valid positive target number.'; return; }
+
+  const rawWindow = el('windowSizeInput') ? el('windowSizeInput').value.trim() : '50';
+  const w = parseInt(rawWindow, 10);
+  if (!w || w <= 0) { el('sessionHint').textContent = '⚠ Please enter a valid positive window size in packets.'; return; }
 
   const res  = await fetch('/api/session/start', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ target: n }),
+    body:    JSON.stringify({ target: n, window_size: w }),
   });
   const data = await res.json();
   if (data.success) {
@@ -100,7 +104,7 @@ async function startSession() {
     sessionCurrent = 0;
     sessionActive  = true;
     showDashboard();
-    showToast(`✅ Session started — capturing ${n} samples`);
+    showToast(`✅ Session started — capturing ${n} samples (Window: ${w} pkts)`);
   } else {
     el('sessionHint').textContent = '⚠ ' + data.message;
   }
@@ -144,6 +148,7 @@ function resetUI() {
   el('dashboardMain').classList.remove('visible');
   el('heroSection').style.display = '';
   el('targetInput').value = '';
+  if (el('windowSizeInput')) el('windowSizeInput').value = '';
   el('sessionHint').textContent = '';
 
   showToast('↺ Session restarted — enter a new target to begin');

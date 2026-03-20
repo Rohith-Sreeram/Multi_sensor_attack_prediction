@@ -5,6 +5,9 @@ from datetime import datetime
 import csv
 import io
 import os
+import time
+import threading
+import statistics
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'ml-training-dashboard-secret'
@@ -52,7 +55,13 @@ capture_state = {
     'active':  False,
     'target':  0,
     'current': 0,
+    'window_size': 50,
 }
+
+# Network packet tracking
+recent_packets = []
+packets_lock = threading.Lock()
+last_db_insert_time = 0.0
 
 # ------------------------------------------------------------------
 # Pages
@@ -69,19 +78,25 @@ def index():
 def start_session():
     data = request.get_json()
     target = int(data.get('target', 0))
+    window_size = int(data.get('window_size', 50))
+    
     if target <= 0:
         return jsonify({'success': False, 'message': 'Target must be > 0'}), 400
+    if window_size <= 0:
+        return jsonify({'success': False, 'message': 'Window size must be > 0'}), 400
 
     capture_state['target']  = target
     capture_state['current'] = 0
     capture_state['active']  = True
+    capture_state['window_size'] = window_size
 
     socketio.emit('session_update', {
         'active':  True,
         'target':  target,
         'current': 0,
+        'window_size': window_size,
     })
-    return jsonify({'success': True, 'target': target})
+    return jsonify({'success': True, 'target': target, 'window_size': window_size})
 
 
 @app.route('/api/session/stop', methods=['POST'])
@@ -124,56 +139,7 @@ def session_status():
 # ------------------------------------------------------------------
 # Network Parameters  (ESP32 / any source → POST here)
 # ------------------------------------------------------------------
-@app.route('/api/network', methods=['POST'])
-def receive_network():
-    if not capture_state['active']:
-        return jsonify({'success': False, 'message': 'No active capture session'}), 400
-
-    if capture_state['current'] >= capture_state['target']:
-        capture_state['active'] = False
-        socketio.emit('session_update', {
-            'active':  False,
-            'target':  capture_state['target'],
-            'current': capture_state['current'],
-            'message': 'Target reached – capture stopped',
-        })
-        return jsonify({'success': False, 'message': 'Target reached'}), 400
-
-    data = request.get_json()
-    try:
-        record = NetworkParam(
-            byte_rate            = float(data['byte_rate']),
-            packet_rate          = float(data['packet_rate']),
-            packet_size_variance = float(data['packet_size_variance']),
-            time_gap_variance    = float(data['time_gap_variance']),
-            time_gap_mean        = float(data['time_gap_mean']),
-            packet_size_mean     = float(data['packet_size_mean']),
-        )
-        db.session.add(record)
-        db.session.commit()
-
-        capture_state['current'] += 1
-
-        if capture_state['current'] >= capture_state['target']:
-            capture_state['active'] = False
-            socketio.emit('session_update', {
-                'active':  False,
-                'target':  capture_state['target'],
-                'current': capture_state['current'],
-                'message': 'Target reached – capture stopped automatically',
-            })
-
-        # Broadcast the new record to all connected clients
-        socketio.emit('network_data', record.to_dict())
-
-        return jsonify({
-            'success': True,
-            'saved':   capture_state['current'],
-            'target':  capture_state['target'],
-        })
-
-    except (KeyError, ValueError) as e:
-        return jsonify({'success': False, 'message': f'Bad data: {e}'}), 400
+# Removed `/api/network` route. Metrics now computed internally in `/api/sensor`.
 
 
 @app.route('/api/network/history', methods=['GET'])
@@ -209,13 +175,74 @@ def download_csv():
 
 
 # ------------------------------------------------------------------
-# ESP32 Sensor Data  (NOT stored – only relayed via Socket.IO)
+# ESP32 Sensor Data  (Stored network metrics when active + relayed)
 # ------------------------------------------------------------------
 @app.route('/api/sensor', methods=['POST'])
 def receive_sensor():
+    global last_db_insert_time
     data = request.get_json()
-    # relay to dashboard – nothing written to DB
+
+    # relay to dashboard
     socketio.emit('sensor_data', data)
+
+    # Calculate network packet metadata
+    now = time.time()
+    packet_size = request.content_length or len(str(data))
+    
+    with packets_lock:
+        window_size = int(capture_state.get('window_size', 50))
+        recent_packets.append((now, packet_size))
+        
+        # Keep only the last window_size packets
+        while len(recent_packets) > window_size:
+            recent_packets.pop(0)
+
+        # Check if we should log network metrics (max 1 per second)
+        if capture_state['active'] and (now - last_db_insert_time >= 1.0):
+            if len(recent_packets) > 1:
+                last_db_insert_time = now
+                
+                sizes = [p[1] for p in recent_packets]
+                times = [p[0] for p in recent_packets]
+                
+                # Calculate time duration of the window
+                duration = times[-1] - times[0]
+                if duration <= 0:
+                    duration = 1e-6  # Prevent division by zero if packets arrived instantly
+                    
+                byte_rate = sum(sizes) / duration
+                packet_rate = len(sizes) / duration
+                
+                packet_size_mean = statistics.mean(sizes)
+                packet_size_variance = statistics.variance(sizes) if len(sizes) > 1 else 0.0
+                
+                gaps = [times[i] - times[i-1] for i in range(1, len(times))]
+                time_gap_mean = statistics.mean(gaps)
+                time_gap_variance = statistics.variance(gaps) if len(gaps) > 1 else 0.0
+                
+                record = NetworkParam(
+                    byte_rate=byte_rate,
+                    packet_rate=packet_rate,
+                    packet_size_variance=packet_size_variance,
+                    time_gap_variance=time_gap_variance,
+                    time_gap_mean=time_gap_mean,
+                    packet_size_mean=packet_size_mean
+                )
+                db.session.add(record)
+                db.session.commit()
+                
+                capture_state['current'] += 1
+                socketio.emit('network_data', record.to_dict())
+
+                if capture_state['current'] >= capture_state['target']:
+                    capture_state['active'] = False
+                    socketio.emit('session_update', {
+                        'active': False,
+                        'target': capture_state['target'],
+                        'current': capture_state['current'],
+                        'message': 'Target reached – capture stopped automatically',
+                    })
+                    
     return jsonify({'success': True})
 
 
