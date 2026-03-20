@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ML Training Dashboard | IoT Monitor</title>
+  <meta name="description" content="Real-time IoT dashboard for ML model training — captures network parameters and live ESP32 sensor feed." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- ───────────────── HEADER ───────────────── -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="brand-icon">⬡</span>
+      <span class="brand-name">ML Training Dashboard</span>
+    </div>
+    <div class="topbar-status">
+      <span class="connection-dot" id="connDot"></span>
+      <span id="connLabel">Connecting…</span>
+    </div>
+  </header>
+
+  <!-- ──────────────── HERO / SESSION SETUP ──────────────── -->
+  <section class="hero" id="heroSection">
+    <div class="hero-glass">
+      <h1 class="hero-title">Configure Capture Session</h1>
+      <p class="hero-sub">Enter the number of network-parameter samples to capture for your ML dataset.</p>
+      <div class="setup-form">
+        <input  id="targetInput" type="number" min="1" placeholder="e.g. 500" class="target-input" />
+        <button id="startBtn" class="btn btn-primary" onclick="startSession()">
+          <span class="btn-icon">▶</span> Start Capture
+        </button>
+      </div>
+      <p class="hint" id="sessionHint"></p>
+    </div>
+  </section>
+
+  <!-- ───────────────── MAIN GRID ───────────────── -->
+  <main class="dashboard" id="dashboardMain">
+
+    <!-- ── Progress Banner ── -->
+    <div class="progress-banner" id="progressBanner">
+      <div class="progress-info">
+        <span id="progressLabel">Waiting…</span>
+        <span id="progressCount" class="mono">0 / 0</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="banner-actions">
+        <button class="btn btn-sm btn-danger" id="stopBtn" onclick="stopSession()">■ Stop</button>
+        <button class="btn btn-sm btn-warn"   id="restartBtn" onclick="restartSession()">↺ Restart</button>
+        <a href="/api/download" class="btn btn-sm btn-accent" id="downloadBtn">⬇ Download CSV</a>
+      </div>
+    </div>
+
+    <!-- ── 3-Column Layout ── -->
+    <div class="grid-layout">
+
+      <!-- LEFT — Camera Feed -->
+      <div class="card camera-card">
+        <div class="card-header">
+          <span class="card-icon">📷</span>
+          <span class="card-title">Live Camera Feed</span>
+          <span class="live-badge">LIVE</span>
+        </div>
+        <div class="camera-container">
+          <img id="cameraFeed" src="" alt="Waiting for feed…" class="camera-img" />
+          <div class="camera-placeholder" id="cameraPlaceholder">
+            <div class="camera-icon-wrap">📷</div>
+            <p>Awaiting camera stream from ESP32…</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- CENTRE — Sensor Cards -->
+      <div class="sensor-column">
+
+        <!-- MPU-6050 -->
+        <div class="card sensor-card">
+          <div class="card-header">
+            <span class="card-icon">🔄</span>
+            <span class="card-title">MPU-6050</span>
+          </div>
+          <div class="sensor-grid-2">
+            <div class="sensor-group">
+              <p class="sensor-group-label">Acceleration (m/s²)</p>
+              <div class="sensor-row"><label>Ax</label><span class="mono" id="accel_x">—</span></div>
+              <div class="sensor-row"><label>Ay</label><span class="mono" id="accel_y">—</span></div>
+              <div class="sensor-row"><label>Az</label><span class="mono" id="accel_z">—</span></div>
+            </div>
+            <div class="sensor-group">
+              <p class="sensor-group-label">Gyroscope (°/s)</p>
+              <div class="sensor-row"><label>Gx</label><span class="mono" id="gyro_x">—</span></div>
+              <div class="sensor-row"><label>Gy</label><span class="mono" id="gyro_y">—</span></div>
+              <div class="sensor-row"><label>Gz</label><span class="mono" id="gyro_z">—</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- DHT-11 & IR -->
+        <div class="card sensor-card sensor-dual">
+          <div class="half-card">
+            <div class="card-header no-pad">
+              <span class="card-icon">🌡️</span>
+              <span class="card-title">DHT-11</span>
+            </div>
+            <div class="big-stat">
+              <span class="big-val" id="temperature">—</span>
+              <span class="big-unit">°C</span>
+            </div>
+            <div class="sensor-row mt8">
+              <label>Humidity</label>
+              <span class="mono" id="humidity">—</span>
+            </div>
+          </div>
+          <div class="divider-v"></div>
+          <div class="half-card">
+            <div class="card-header no-pad">
+              <span class="card-icon">🔴</span>
+              <span class="card-title">IR Sensor</span>
+            </div>
+            <div class="big-stat">
+              <span class="big-val ir-val" id="irLabel">—</span>
+            </div>
+            <div class="sensor-row mt8">
+              <label>Raw</label>
+              <span class="mono" id="irRaw">—</span>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /sensor-column -->
+
+      <!-- RIGHT — Network Parameters -->
+      <div class="card net-card">
+        <div class="card-header">
+          <span class="card-icon">📡</span>
+          <span class="card-title">Network Parameters</span>
+          <span class="card-badge" id="netBadge">Live</span>
+        </div>
+        <div class="net-grid">
+          <div class="net-param">
+            <span class="net-label">Byte Rate</span>
+            <span class="net-val mono" id="n_byte_rate">—</span>
+            <span class="net-unit">B/s</span>
+          </div>
+          <div class="net-param">
+            <span class="net-label">Packet Rate</span>
+            <span class="net-val mono" id="n_packet_rate">—</span>
+            <span class="net-unit">pkt/s</span>
+          </div>
+          <div class="net-param">
+            <span class="net-label">Pkt Size Variance</span>
+            <span class="net-val mono" id="n_pkt_size_var">—</span>
+            <span class="net-unit">B²</span>
+          </div>
+          <div class="net-param">
+            <span class="net-label">Time-Gap Variance</span>
+            <span class="net-val mono" id="n_tgap_var">—</span>
+            <span class="net-unit">ms²</span>
+          </div>
+          <div class="net-param">
+            <span class="net-label">Time-Gap Mean</span>
+            <span class="net-val mono" id="n_tgap_mean">—</span>
+            <span class="net-unit">ms</span>
+          </div>
+          <div class="net-param">
+            <span class="net-label">Pkt Size Mean</span>
+            <span class="net-val mono" id="n_pkt_size_mean">—</span>
+            <span class="net-unit">B</span>
+          </div>
+        </div>
+
+        <!-- Mini Sparkline Chart -->
+        <div class="chart-wrap">
+          <canvas id="netChart"></canvas>
+        </div>
+      </div>
+
+    </div><!-- /grid-layout -->
+
+    <!-- ── History Table ── -->
+    <div class="card table-card">
+      <div class="card-header">
+        <span class="card-icon">🗃️</span>
+        <span class="card-title">Captured Records</span>
+        <span class="card-badge" id="recordCount">0 rows</span>
+      </div>
+      <div class="table-scroll">
+        <table id="historyTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Byte Rate</th>
+              <th>Pkt Rate</th>
+              <th>Pkt Size Var</th>
+              <th>Time-Gap Var</th>
+              <th>Time-Gap Mean</th>
+              <th>Pkt Size Mean</th>
+              <th>Timestamp</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </main><!-- /dashboard -->
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script src="/static/main.js"></script>
+</body>
+</html>

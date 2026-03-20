@@ -1,0 +1,306 @@
+/* =====================================================
+   main.js — ML Training Dashboard client-side logic
+   ===================================================== */
+
+const socket = io();
+
+// ─── State ────────────────────────────────────────────
+let sessionTarget  = 0;
+let sessionCurrent = 0;
+let sessionActive  = false;
+
+// ─── Chart ────────────────────────────────────────────
+const chartColors = {
+  byte_rate:            '#3b82f6',
+  packet_rate:          '#8b5cf6',
+  packet_size_variance: '#10b981',
+  time_gap_variance:    '#f59e0b',
+  time_gap_mean:        '#ef4444',
+  packet_size_mean:     '#06b6d4',
+};
+
+const maxChartPoints = 30;
+const chartData = {
+  labels: [],
+  datasets: [
+    { label: 'Byte Rate',        data: [], borderColor: chartColors.byte_rate,            tension: .4, pointRadius: 1 },
+    { label: 'Packet Rate',      data: [], borderColor: chartColors.packet_rate,          tension: .4, pointRadius: 1 },
+    { label: 'Pkt-Size Var',     data: [], borderColor: chartColors.packet_size_variance, tension: .4, pointRadius: 1 },
+    { label: 'Time-Gap Var',     data: [], borderColor: chartColors.time_gap_variance,    tension: .4, pointRadius: 1 },
+    { label: 'Time-Gap Mean',    data: [], borderColor: chartColors.time_gap_mean,        tension: .4, pointRadius: 1 },
+    { label: 'Pkt-Size Mean',    data: [], borderColor: chartColors.packet_size_mean,     tension: .4, pointRadius: 1 },
+  ],
+};
+
+let netChart;
+
+function initChart() {
+  const ctx = document.getElementById('netChart').getContext('2d');
+  netChart = new Chart(ctx, {
+    type: 'line',
+    data: chartData,
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      plugins: {
+        legend: {
+          labels: { color: '#64748b', boxWidth: 10, font: { size: 10 } },
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#64748b', font: { size: 9 }, maxTicksLimit: 6 },
+             grid: { color: 'rgba(255,255,255,.04)' } },
+        y: { ticks: { color: '#64748b', font: { size: 9 } },
+             grid: { color: 'rgba(255,255,255,.04)' } },
+      },
+    },
+  });
+}
+
+// ─── Helpers ──────────────────────────────────────────
+function el(id) { return document.getElementById(id); }
+
+function fmt(v, dec = 2) {
+  if (v === null || v === undefined) return '—';
+  return parseFloat(v).toFixed(dec);
+}
+
+function showToast(msg, duration = 3500) {
+  const t = el('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+function updateProgress(current, target, active) {
+  const pct = target > 0 ? Math.min((current / target) * 100, 100) : 0;
+  el('progressFill').style.width  = pct + '%';
+  el('progressCount').textContent = `${current} / ${target}`;
+  el('progressLabel').textContent = active
+    ? '🔴 Capturing…'
+    : (current >= target && target > 0 ? '✅ Capture complete' : '⏸ Paused');
+  el('stopBtn').disabled = !active;
+}
+
+// ─── Session Control ───────────────────────────────────
+async function startSession() {
+  const raw = el('targetInput').value.trim();
+  const n   = parseInt(raw, 10);
+  if (!n || n <= 0) { el('sessionHint').textContent = '⚠ Please enter a valid positive number.'; return; }
+
+  const res  = await fetch('/api/session/start', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ target: n }),
+  });
+  const data = await res.json();
+  if (data.success) {
+    sessionTarget  = n;
+    sessionCurrent = 0;
+    sessionActive  = true;
+    showDashboard();
+    showToast(`✅ Session started — capturing ${n} samples`);
+  } else {
+    el('sessionHint').textContent = '⚠ ' + data.message;
+  }
+}
+
+async function stopSession() {
+  await fetch('/api/session/stop', { method: 'POST' });
+  sessionActive = false;
+  updateProgress(sessionCurrent, sessionTarget, false);
+  showToast('⏹ Capture stopped manually');
+}
+
+async function restartSession() {
+  if (!confirm('Restart will clear ALL stored records and return to the setup screen. Continue?')) return;
+  await fetch('/api/session/restart', { method: 'POST' });
+  // UI reset handled by session_restart socket event
+}
+
+function resetUI() {
+  // Reset local state
+  sessionTarget  = 0;
+  sessionCurrent = 0;
+  sessionActive  = false;
+
+  // Clear table
+  el('historyBody').innerHTML = '';
+  el('recordCount').textContent = '0 rows';
+
+  // Clear chart
+  if (netChart) {
+    chartData.labels = [];
+    chartData.datasets.forEach(d => d.data = []);
+    netChart.update();
+  }
+
+  // Clear network param cells
+  ['n_byte_rate','n_packet_rate','n_pkt_size_var',
+   'n_tgap_var','n_tgap_mean','n_pkt_size_mean'].forEach(id => el(id).textContent = '—');
+
+  // Return to hero / setup screen
+  el('dashboardMain').classList.remove('visible');
+  el('heroSection').style.display = '';
+  el('targetInput').value = '';
+  el('sessionHint').textContent = '';
+
+  showToast('↺ Session restarted — enter a new target to begin');
+}
+
+function showDashboard() {
+  el('heroSection').style.display  = 'none';
+  el('dashboardMain').classList.add('visible');
+  updateProgress(sessionCurrent, sessionTarget, sessionActive);
+  if (!netChart) initChart();
+  loadHistory();
+}
+
+// ─── History loader ────────────────────────────────────
+async function loadHistory() {
+  const res  = await fetch('/api/network/history?limit=100');
+  const rows = await res.json();
+  rows.forEach(r => addTableRow(r));
+  el('recordCount').textContent = `${rows.length} rows`;
+}
+
+// ─── Table ────────────────────────────────────────────
+const MAX_TABLE_ROWS = 300;
+
+function addTableRow(r, prepend = false) {
+  const tbody = el('historyBody');
+  const tr    = document.createElement('tr');
+  tr.innerHTML = `
+    <td>${r.id}</td>
+    <td>${fmt(r.byte_rate)}</td>
+    <td>${fmt(r.packet_rate)}</td>
+    <td>${fmt(r.packet_size_variance)}</td>
+    <td>${fmt(r.time_gap_variance)}</td>
+    <td>${fmt(r.time_gap_mean)}</td>
+    <td>${fmt(r.packet_size_mean)}</td>
+    <td>${r.timestamp}</td>
+  `;
+  if (prepend) {
+    tbody.insertBefore(tr, tbody.firstChild);
+    if (tbody.rows.length > MAX_TABLE_ROWS) tbody.deleteRow(tbody.rows.length - 1);
+  } else {
+    tbody.appendChild(tr);
+  }
+
+  const cnt = parseInt(el('recordCount').textContent) || 0;
+  el('recordCount').textContent = `${cnt + (prepend ? 1 : 0)} rows`;
+}
+
+// ─── Chart update ─────────────────────────────────────
+function pushChartPoint(r) {
+  const label = r.timestamp.split(' ')[1] || '';
+  chartData.labels.push(label);
+  chartData.datasets[0].data.push(r.byte_rate);
+  chartData.datasets[1].data.push(r.packet_rate);
+  chartData.datasets[2].data.push(r.packet_size_variance);
+  chartData.datasets[3].data.push(r.time_gap_variance);
+  chartData.datasets[4].data.push(r.time_gap_mean);
+  chartData.datasets[5].data.push(r.packet_size_mean);
+
+  if (chartData.labels.length > maxChartPoints) {
+    chartData.labels.shift();
+    chartData.datasets.forEach(d => d.data.shift());
+  }
+  netChart.update();
+}
+
+// ─── Socket.IO events ─────────────────────────────────
+socket.on('connect', () => {
+  el('connDot').classList.add('ok');
+  el('connLabel').textContent = 'Connected';
+});
+
+socket.on('disconnect', () => {
+  el('connDot').classList.remove('ok');
+  el('connLabel').textContent = 'Disconnected';
+});
+
+socket.on('session_update', (d) => {
+  sessionActive  = d.active;
+  sessionTarget  = d.target;
+  sessionCurrent = d.current;
+  if (el('dashboardMain').classList.contains('visible')) {
+    updateProgress(d.current, d.target, d.active);
+  }
+  if (d.message) showToast(d.message);
+});
+
+socket.on('session_restart', () => {
+  resetUI();
+});
+
+// ── Live network parameter update ──
+socket.on('network_data', (r) => {
+  // Update live param cells
+  el('n_byte_rate').textContent    = fmt(r.byte_rate);
+  el('n_packet_rate').textContent  = fmt(r.packet_rate);
+  el('n_pkt_size_var').textContent = fmt(r.packet_size_variance);
+  el('n_tgap_var').textContent     = fmt(r.time_gap_variance);
+  el('n_tgap_mean').textContent    = fmt(r.time_gap_mean);
+  el('n_pkt_size_mean').textContent= fmt(r.packet_size_mean);
+
+  el('netBadge').textContent = '● Live';
+
+  // Prepend to table
+  if (el('dashboardMain').classList.contains('visible')) {
+    addTableRow(r, true);
+    const cnt = el('historyBody').rows.length;
+    el('recordCount').textContent = `${cnt} rows`;
+    if (netChart) pushChartPoint(r);
+  }
+
+  sessionCurrent++;
+  updateProgress(sessionCurrent, sessionTarget, sessionActive);
+});
+
+// ── Live sensor data (NOT stored) ──
+socket.on('sensor_data', (d) => {
+  // MPU-6050
+  if (d.accel) {
+    el('accel_x').textContent = fmt(d.accel.x, 3);
+    el('accel_y').textContent = fmt(d.accel.y, 3);
+    el('accel_z').textContent = fmt(d.accel.z, 3);
+  }
+  if (d.gyro) {
+    el('gyro_x').textContent = fmt(d.gyro.x, 3);
+    el('gyro_y').textContent = fmt(d.gyro.y, 3);
+    el('gyro_z').textContent = fmt(d.gyro.z, 3);
+  }
+
+  // DHT-11
+  if (d.temperature !== undefined) el('temperature').textContent = fmt(d.temperature, 1);
+  if (d.humidity    !== undefined) el('humidity').textContent    = fmt(d.humidity, 1) + ' %';
+
+  // IR sensor
+  if (d.ir !== undefined) {
+    const detected = !!d.ir.detected;
+    el('irLabel').textContent = detected ? '🔴 Object' : '⚪ Clear';
+    el('irRaw').textContent   = d.ir.raw ?? '—';
+  }
+
+  // Camera frame (base64 JPEG or URL)
+  if (d.camera) {
+    const img = el('cameraFeed');
+    img.src = d.camera.startsWith('data:') ? d.camera : 'data:image/jpeg;base64,' + d.camera;
+    img.style.display = 'block';
+    el('cameraPlaceholder').style.display = 'none';
+  }
+});
+
+// ─── On load: check for existing session ─────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  const res  = await fetch('/api/session/status');
+  const data = await res.json();
+  if (data.active || data.db_total > 0) {
+    sessionActive  = data.active;
+    sessionTarget  = data.target;
+    sessionCurrent = data.current;
+    showDashboard();
+  }
+});
