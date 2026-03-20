@@ -1,3 +1,8 @@
+databases:
+  - name: ml-dashboard-db
+    databaseName: ml_dashboard
+    user: ml_user
+
 services:
   - type: web
     name: ml-dashboard
@@ -7,3 +12,7 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ml-dashboard-db
+          property: connectionString
