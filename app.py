@@ -197,8 +197,8 @@ def receive_sensor():
         while len(recent_packets) > window_size:
             recent_packets.pop(0)
 
-        # Check if we should log network metrics (max 1 per second)
-        if capture_state['active'] and (now - last_db_insert_time >= 1.0):
+        # Check if we should calculate network metrics (max 1 per second)
+        if now - last_db_insert_time >= 1.0:
             if len(recent_packets) > 1:
                 last_db_insert_time = now
                 
@@ -220,21 +220,34 @@ def receive_sensor():
                 time_gap_mean = statistics.mean(gaps)
                 time_gap_variance = statistics.variance(gaps) if len(gaps) > 1 else 0.0
                 
-                record = NetworkParam(
-                    byte_rate=byte_rate,
-                    packet_rate=packet_rate,
-                    packet_size_variance=packet_size_variance,
-                    time_gap_variance=time_gap_variance,
-                    time_gap_mean=time_gap_mean,
-                    packet_size_mean=packet_size_mean
-                )
-                db.session.add(record)
-                db.session.commit()
-                
-                capture_state['current'] += 1
-                socketio.emit('network_data', record.to_dict())
+                network_data_dict = {
+                    'byte_rate': byte_rate,
+                    'packet_rate': packet_rate,
+                    'packet_size_variance': packet_size_variance,
+                    'time_gap_variance': time_gap_variance,
+                    'time_gap_mean': time_gap_mean,
+                    'packet_size_mean': packet_size_mean,
+                    'timestamp': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+                }
 
-                if capture_state['current'] >= capture_state['target']:
+                if capture_state['active']:
+                    record = NetworkParam(
+                        byte_rate=byte_rate,
+                        packet_rate=packet_rate,
+                        packet_size_variance=packet_size_variance,
+                        time_gap_variance=time_gap_variance,
+                        time_gap_mean=time_gap_mean,
+                        packet_size_mean=packet_size_mean
+                    )
+                    db.session.add(record)
+                    db.session.commit()
+                    
+                    network_data_dict['id'] = record.id
+                    capture_state['current'] += 1
+
+                socketio.emit('network_data', network_data_dict)
+
+                if capture_state['active'] and capture_state['current'] >= capture_state['target']:
                     capture_state['active'] = False
                     socketio.emit('session_update', {
                         'active': False,

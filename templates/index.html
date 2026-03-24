@@ -62,49 +62,38 @@
     <!-- ── 3-Column Layout ── -->
     <div class="grid-layout">
 
-      <!-- LEFT — Camera Feed -->
-      <div class="card camera-card">
-        <div class="card-header">
-          <span class="card-icon">📷</span>
-          <span class="card-title">Live Camera Feed</span>
-          <span class="live-badge">LIVE</span>
+      <!-- LEFT — Sensor Column 1 -->
+      <div class="sensor-column">
+        <!-- Ultrasonic Sensor -->
+        <div class="card sensor-card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 150px;">
+          <div class="card-header" style="width: 100%; border-bottom: none; justify-content: flex-start;">
+            <span class="card-icon">📏</span>
+            <span class="card-title">Ultrasonic</span>
+          </div>
+          <div class="big-stat" style="margin-top: auto; margin-bottom: auto;">
+            <span class="big-val" id="ultrasonic_dist">—</span>
+            <span class="big-unit">cm</span>
+          </div>
         </div>
-        <div class="camera-container">
-          <img id="cameraFeed" src="" alt="Waiting for feed…" class="camera-img" />
-          <div class="camera-placeholder" id="cameraPlaceholder">
-            <div class="camera-icon-wrap">📷</div>
-            <p>Awaiting camera stream from ESP32…</p>
+
+        <!-- Vibration Sensor -->
+        <div class="card sensor-card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 150px;">
+          <div class="card-header" style="width: 100%; border-bottom: none; justify-content: flex-start;">
+            <span class="card-icon">📳</span>
+            <span class="card-title">Vibration</span>
+          </div>
+          <div class="big-stat" style="margin-top: auto; margin-bottom: auto;">
+            <span class="big-val" id="vibration_val">—</span>
+            <span class="big-unit">g</span>
           </div>
         </div>
       </div>
 
-      <!-- CENTRE — Sensor Cards -->
+      <!-- CENTRE — Sensor Column 2 -->
       <div class="sensor-column">
 
-        <!-- MPU-6050 -->
-        <div class="card sensor-card">
-          <div class="card-header">
-            <span class="card-icon">🔄</span>
-            <span class="card-title">MPU-6050</span>
-          </div>
-          <div class="sensor-grid-2">
-            <div class="sensor-group">
-              <p class="sensor-group-label">Acceleration (m/s²)</p>
-              <div class="sensor-row"><label>Ax</label><span class="mono" id="accel_x">—</span></div>
-              <div class="sensor-row"><label>Ay</label><span class="mono" id="accel_y">—</span></div>
-              <div class="sensor-row"><label>Az</label><span class="mono" id="accel_z">—</span></div>
-            </div>
-            <div class="sensor-group">
-              <p class="sensor-group-label">Gyroscope (°/s)</p>
-              <div class="sensor-row"><label>Gx</label><span class="mono" id="gyro_x">—</span></div>
-              <div class="sensor-row"><label>Gy</label><span class="mono" id="gyro_y">—</span></div>
-              <div class="sensor-row"><label>Gz</label><span class="mono" id="gyro_z">—</span></div>
-            </div>
-          </div>
-        </div>
-
         <!-- DHT-11 & IR -->
-        <div class="card sensor-card sensor-dual">
+        <div class="card sensor-card sensor-dual" style="min-height: 250px;">
           <div class="half-card">
             <div class="card-header no-pad">
               <span class="card-icon">🌡️</span>
@@ -125,12 +114,8 @@
               <span class="card-icon">🔴</span>
               <span class="card-title">IR Sensor</span>
             </div>
-            <div class="big-stat">
-              <span class="big-val ir-val" id="irLabel">—</span>
-            </div>
-            <div class="sensor-row mt8">
-              <label>Raw</label>
-              <span class="mono" id="irRaw">—</span>
+            <div class="big-stat" style="font-size: 1.2rem; display: flex; align-items: center; justify-content: center; height: 60px; margin-top: 15px;">
+              <span class="big-val ir-val" id="irLabel" style="font-size: 1.2rem;">—</span>
             </div>
           </div>
         </div>

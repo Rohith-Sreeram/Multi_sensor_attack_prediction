@@ -252,30 +252,28 @@ socket.on('network_data', (r) => {
 
   el('netBadge').textContent = '● Live';
 
-  // Prepend to table
-  if (el('dashboardMain').classList.contains('visible')) {
+  // Prepend to table and chart ONLY if capturing
+  if (sessionActive && el('dashboardMain').classList.contains('visible') && r.id !== undefined) {
     addTableRow(r, true);
     const cnt = el('historyBody').rows.length;
     el('recordCount').textContent = `${cnt} rows`;
     if (netChart) pushChartPoint(r);
+    
+    sessionCurrent++;
+    updateProgress(sessionCurrent, sessionTarget, sessionActive);
   }
-
-  sessionCurrent++;
-  updateProgress(sessionCurrent, sessionTarget, sessionActive);
 });
 
 // ── Live sensor data (NOT stored) ──
 socket.on('sensor_data', (d) => {
-  // MPU-6050
-  if (d.accel) {
-    el('accel_x').textContent = fmt(d.accel.x, 3);
-    el('accel_y').textContent = fmt(d.accel.y, 3);
-    el('accel_z').textContent = fmt(d.accel.z, 3);
+  // Ultrasonic
+  if (d.ultrasonic) {
+    el('ultrasonic_dist').textContent = fmt(d.ultrasonic.distance, 1);
   }
-  if (d.gyro) {
-    el('gyro_x').textContent = fmt(d.gyro.x, 3);
-    el('gyro_y').textContent = fmt(d.gyro.y, 3);
-    el('gyro_z').textContent = fmt(d.gyro.z, 3);
+
+  // Vibration
+  if (d.vibration) {
+    el('vibration_val').textContent = fmt(d.vibration.value, 3);
   }
 
   // DHT-11
@@ -285,16 +283,7 @@ socket.on('sensor_data', (d) => {
   // IR sensor
   if (d.ir !== undefined) {
     const detected = !!d.ir.detected;
-    el('irLabel').textContent = detected ? '🔴 Object' : '⚪ Clear';
-    el('irRaw').textContent   = d.ir.raw ?? '—';
-  }
-
-  // Camera frame (base64 JPEG or URL)
-  if (d.camera) {
-    const img = el('cameraFeed');
-    img.src = d.camera.startsWith('data:') ? d.camera : 'data:image/jpeg;base64,' + d.camera;
-    img.style.display = 'block';
-    el('cameraPlaceholder').style.display = 'none';
+    el('irLabel').textContent = detected ? '🔴 Presence' : '⚪ No Presence';
   }
 });
 

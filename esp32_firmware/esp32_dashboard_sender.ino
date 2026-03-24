@@ -33,9 +33,7 @@ const int   SERVER_PORT = 5000;
 
 // ── Timing ────────────────────────────────────────────
 const unsigned long SENSOR_INTERVAL = 500;   // ms
-const unsigned long NET_INTERVAL    = 1000;  // ms
 unsigned long lastSensor = 0;
-unsigned long lastNet    = 0;
 
 // ── Objects ───────────────────────────────────────────
 Adafruit_MPU6050 mpu;
@@ -71,14 +69,6 @@ void loop() {
   if (now - lastSensor >= SENSOR_INTERVAL) {
     lastSensor = now;
     sendSensorData();
-  }
-
-  // ── Send network parameters ──
-  // In a real deployment this would come from actual packet capture.
-  // For testing, dummy/computed values are sent here.
-  if (now - lastNet >= NET_INTERVAL) {
-    lastNet = now;
-    sendNetworkParams();
   }
 }
 
@@ -117,21 +107,7 @@ void sendSensorData() {
   postJson("/api/sensor", body);
 }
 
-// ─────────────────────────────────────────────────────
-void sendNetworkParams() {
-  // Replace these with real computed values from your packet-sniffer logic.
-  StaticJsonDocument<256> doc;
-  doc["byte_rate"]            = random(1000, 9000);      // bytes/s
-  doc["packet_rate"]          = random(10, 200);          // pkts/s
-  doc["packet_size_variance"] = random(50, 5000);
-  doc["time_gap_variance"]    = random(1, 500);
-  doc["time_gap_mean"]        = random(1, 100);
-  doc["packet_size_mean"]     = random(64, 1500);
 
-  String body;
-  serializeJson(doc, body);
-  postJson("/api/network", body);
-}
 
 // ─────────────────────────────────────────────────────
 void postJson(const char* endpoint, const String& body) {
