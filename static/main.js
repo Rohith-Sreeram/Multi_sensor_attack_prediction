@@ -81,6 +81,11 @@ function updateProgress(current, target, active) {
     ? '🔴 Capturing…'
     : (current >= target && target > 0 ? '✅ Capture complete' : '⏸ Paused');
   el('stopBtn').disabled = !active;
+
+  // Retrieve window_time from the input if we don't have it globally
+  // In a real app, we'd use the state variable.
+  const w = el('windowSizeInput') ? el('windowSizeInput').value : '—';
+  el('activeWindowLabel').textContent = w + 's';
 }
 
 // ─── Session Control ───────────────────────────────────
@@ -89,14 +94,14 @@ async function startSession() {
   const n = parseInt(rawTarget, 10);
   if (!n || n <= 0) { el('sessionHint').textContent = '⚠ Please enter a valid positive target number.'; return; }
 
-  const rawWindow = el('windowSizeInput') ? el('windowSizeInput').value.trim() : '50';
-  const w = parseInt(rawWindow, 10);
-  if (!w || w <= 0) { el('sessionHint').textContent = '⚠ Please enter a valid positive window size in packets.'; return; }
+  const rawWindow = el('windowSizeInput') ? el('windowSizeInput').value.trim() : '2';
+  const w = parseFloat(rawWindow);
+  if (!w || w <= 0) { el('sessionHint').textContent = '⚠ Please enter a valid positive window time in seconds.'; return; }
 
   const res  = await fetch('/api/session/start', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ target: n, window_size: w }),
+    body:    JSON.stringify({ target: n, window_time: w }),
   });
   const data = await res.json();
   if (data.success) {
@@ -104,7 +109,7 @@ async function startSession() {
     sessionCurrent = 0;
     sessionActive  = true;
     showDashboard();
-    showToast(`✅ Session started — capturing ${n} samples (Window: ${w} pkts)`);
+    showToast(`✅ Session started — capturing ${n} samples (Window: ${w}s)`);
   } else {
     el('sessionHint').textContent = '⚠ ' + data.message;
   }
@@ -230,6 +235,15 @@ socket.on('session_update', (d) => {
   sessionActive  = d.active;
   sessionTarget  = d.target;
   sessionCurrent = d.current;
+  
+  if (d.window_time !== undefined) {
+    // Optionally update the input field if not currently typing, 
+    // or just store it for local calculations if needed.
+    if (el('windowSizeInput') && document.activeElement !== el('windowSizeInput')) {
+        el('windowSizeInput').value = d.window_time;
+    }
+  }
+
   if (el('dashboardMain').classList.contains('visible')) {
     updateProgress(d.current, d.target, d.active);
   }
@@ -291,7 +305,7 @@ socket.on('sensor_data', (d) => {
 window.addEventListener('DOMContentLoaded', async () => {
   const res  = await fetch('/api/session/status');
   const data = await res.json();
-  if (data.active || data.db_total > 0) {
+  if (data.active) {
     sessionActive  = data.active;
     sessionTarget  = data.target;
     sessionCurrent = data.current;

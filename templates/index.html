@@ -31,7 +31,7 @@
       <p class="hero-sub">Enter the number of network-parameter samples to capture for your ML dataset.</p>
       <div class="setup-form">
         <input id="targetInput" type="number" min="1" placeholder="Target samples (e.g. 500)" class="target-input" />
-        <input id="windowSizeInput" type="number" min="1" step="1" placeholder="Window Size (pkts) e.g. 50" class="target-input" />
+        <input id="windowSizeInput" type="number" min="0.5" step="0.5" placeholder="Window Time (sec) e.g. 2.0" class="target-input" />
         <button id="startBtn" class="btn btn-primary" onclick="startSession()">
           <span class="btn-icon">▶</span> Start Capture
         </button>
@@ -48,6 +48,9 @@
       <div class="progress-info">
         <span id="progressLabel">Waiting…</span>
         <span id="progressCount" class="mono">0 / 0</span>
+        <span class="divider-v" style="height: 14px; margin: 0 10px; opacity: 0.3;"></span>
+        <span style="font-size: 0.8rem; opacity: 0.8;">Window: </span>
+        <span id="activeWindowLabel" class="mono" style="font-size: 0.8rem; font-weight: 600;">—</span>
       </div>
       <div class="progress-track">
         <div class="progress-fill" id="progressFill"></div>

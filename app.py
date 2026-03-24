@@ -35,7 +35,7 @@ class NetworkParam(db.Model):
     time_gap_variance    = db.Column(db.Float, nullable=False)
     time_gap_mean        = db.Column(db.Float, nullable=False)
     packet_size_mean     = db.Column(db.Float, nullable=False)
-    timestamp            = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp            = db.Column(db.DateTime, default=datetime.now)
 
     def to_dict(self):
         return {
@@ -55,7 +55,7 @@ capture_state = {
     'active':  False,
     'target':  0,
     'current': 0,
-    'window_size': 50,
+    'window_time': 2.0,
 }
 
 # Network packet tracking
@@ -78,25 +78,25 @@ def index():
 def start_session():
     data = request.get_json()
     target = int(data.get('target', 0))
-    window_size = int(data.get('window_size', 50))
+    window_time = float(data.get('window_time', 2.0))
     
     if target <= 0:
         return jsonify({'success': False, 'message': 'Target must be > 0'}), 400
-    if window_size <= 0:
-        return jsonify({'success': False, 'message': 'Window size must be > 0'}), 400
+    if window_time <= 0:
+        return jsonify({'success': False, 'message': 'Window time must be > 0'}), 400
 
     capture_state['target']  = target
     capture_state['current'] = 0
     capture_state['active']  = True
-    capture_state['window_size'] = window_size
+    capture_state['window_time'] = window_time
 
     socketio.emit('session_update', {
         'active':  True,
         'target':  target,
         'current': 0,
-        'window_size': window_size,
+        'window_time': window_time,
     })
-    return jsonify({'success': True, 'target': target, 'window_size': window_size})
+    return jsonify({'success': True, 'target': target, 'window_time': window_time})
 
 
 @app.route('/api/session/stop', methods=['POST'])
@@ -106,6 +106,7 @@ def stop_session():
         'active':  False,
         'target':  capture_state['target'],
         'current': capture_state['current'],
+        'window_time': capture_state['window_time'],
     })
     return jsonify({'success': True})
 
@@ -161,9 +162,10 @@ def download_csv():
                      'packet_size_variance', 'time_gap_variance',
                      'time_gap_mean', 'packet_size_mean', 'timestamp'])
     for r in records:
+        ts_str = r.timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
         writer.writerow([r.id, r.byte_rate, r.packet_rate,
                          r.packet_size_variance, r.time_gap_variance,
-                         r.time_gap_mean, r.packet_size_mean, r.timestamp])
+                         r.time_gap_mean, r.packet_size_mean, ts_str])
 
     output.seek(0)
     return send_file(
@@ -190,35 +192,46 @@ def receive_sensor():
     packet_size = request.content_length or len(str(data))
     
     with packets_lock:
-        window_size = int(capture_state.get('window_size', 50))
-        recent_packets.append((now, packet_size))
-        
-        # Keep only the last window_size packets
-        while len(recent_packets) > window_size:
-            recent_packets.pop(0)
+        window_time = float(capture_state.get('window_time', 2.0))
+        recent_packets.append((now, packet_size)) # Always add the current packet
 
-        # Check if we should calculate network metrics (max 1 per second)
-        if now - last_db_insert_time >= 1.0:
-            if len(recent_packets) > 1:
-                last_db_insert_time = now
-                
+        # NO: if the user wants non-overlapping "tumbling" windows that record at every interval:
+        # 1. We keep appending.
+        # 2. When (now - last_db_insert_time) >= window_time:
+        #    - perform calculation
+        #    - record to DB
+        #    - set last_db_insert_time = now
+        #    - CLEAR recent_packets so we start fresh for the next window
+        
+        if last_db_insert_time == 0:
+            last_db_insert_time = now
+
+        if now - last_db_insert_time >= window_time:
+            if len(recent_packets) > 0:
+                # ── USER'S DEFINED FORMULAS ──
+                # mean packet size: sum of sizes / count
                 sizes = [p[1] for p in recent_packets]
                 times = [p[0] for p in recent_packets]
-                
-                # Calculate time duration of the window
-                duration = times[-1] - times[0]
-                if duration <= 0:
-                    duration = 1e-6  # Prevent division by zero if packets arrived instantly
-                    
-                byte_rate = sum(sizes) / duration
-                packet_rate = len(sizes) / duration
                 
                 packet_size_mean = statistics.mean(sizes)
                 packet_size_variance = statistics.variance(sizes) if len(sizes) > 1 else 0.0
                 
-                gaps = [times[i] - times[i-1] for i in range(1, len(times))]
-                time_gap_mean = statistics.mean(gaps)
-                time_gap_variance = statistics.variance(gaps) if len(gaps) > 1 else 0.0
+                # byte rate: total bytes / window_time
+                byte_rate = sum(sizes) / window_time
+                
+                # packet rate: total packets / window_time
+                packet_rate = len(sizes) / window_time
+                
+                # time gap mean: sum of gaps / (N - 1)
+                if len(times) > 1:
+                    gaps = [times[i] - times[i-1] for i in range(1, len(times))]
+                    time_gap_mean = statistics.mean(gaps)
+                    time_gap_variance = statistics.variance(gaps) if len(gaps) > 1 else 0.0
+                else:
+                    time_gap_mean = 0.0
+                    time_gap_variance = 0.0
+                
+                last_db_insert_time = now
                 
                 network_data_dict = {
                     'byte_rate': byte_rate,
@@ -227,7 +240,7 @@ def receive_sensor():
                     'time_gap_variance': time_gap_variance,
                     'time_gap_mean': time_gap_mean,
                     'packet_size_mean': packet_size_mean,
-                    'timestamp': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
                 }
 
                 if capture_state['active']:
@@ -246,6 +259,9 @@ def receive_sensor():
                     capture_state['current'] += 1
 
                 socketio.emit('network_data', network_data_dict)
+
+                # Tumbling window: Clear the list for the next chunk
+                recent_packets.clear()
 
                 if capture_state['active'] and capture_state['current'] >= capture_state['target']:
                     capture_state['active'] = False
@@ -268,6 +284,7 @@ def on_connect():
         'active':  capture_state['active'],
         'target':  capture_state['target'],
         'current': capture_state['current'],
+        'window_time': capture_state['window_time'],
     })
 
 
