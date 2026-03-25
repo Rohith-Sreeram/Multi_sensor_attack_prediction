@@ -326,7 +326,7 @@ function startPolling() {
     } catch (err) {
       console.warn("Polling error:", err);
     }
-  }, 2000);
+  }, 500);
 }
 
 function updateSensorUI(d) {
