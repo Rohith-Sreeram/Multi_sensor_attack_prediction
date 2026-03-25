@@ -15,8 +15,8 @@ import statistics
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'ml-training-dashboard-secret'
 
-# Read DATABASE_URL from environment for Render PostgreSQL
-db_url = os.environ.get('DATABASE_URL', 'sqlite:///network_params.db')
+# Read DATABASE_URL from environment for Render or POSTGRES_URL for Vercel
+db_url = os.environ.get('POSTGRES_URL') or os.environ.get('DATABASE_URL', 'sqlite:///network_params.db')
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
@@ -65,6 +65,13 @@ capture_state = {
 recent_packets = []
 packets_lock = threading.Lock()
 last_db_insert_time = 0.0
+
+# Global state for HTTP polling (Vercel compatibility)
+latest_data = {
+    'sensor':  {},
+    'network': {},
+    'session': capture_state
+}
 
 # ------------------------------------------------------------------
 # Pages
@@ -143,7 +150,10 @@ def session_status():
 # ------------------------------------------------------------------
 # Network Parameters  (ESP32 / any source → POST here)
 # ------------------------------------------------------------------
-# Removed `/api/network` route. Metrics now computed internally in `/api/sensor`.
+@app.route('/api/latest', methods=['GET'])
+def get_latest():
+    """Return the latest sensor and network metrics for HTTP polling."""
+    return jsonify(latest_data)
 
 
 @app.route('/api/network/history', methods=['GET'])
@@ -189,6 +199,9 @@ def receive_sensor():
 
     # relay to dashboard
     socketio.emit('sensor_data', data)
+    
+    # update global state for polling
+    latest_data['sensor'] = data
 
     # Calculate network packet metadata
     now = time.time()
@@ -262,6 +275,9 @@ def receive_sensor():
                     capture_state['current'] += 1
 
                 socketio.emit('network_data', network_data_dict)
+                
+                # update global state for polling
+                latest_data['network'] = network_data_dict
 
                 # Tumbling window: Clear the list for the next chunk
                 recent_packets.clear()

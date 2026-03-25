@@ -301,6 +301,93 @@ socket.on('sensor_data', (d) => {
   }
 });
 
+// ─── HTTP Polling (Vercel Compatibility Fallback) ──────
+function startPolling() {
+  console.log("Starting HTTP polling...");
+  setInterval(async () => {
+    try {
+      const res = await fetch('/api/latest');
+      const data = await res.json();
+      
+      // Update sensor data
+      if (data.sensor && Object.keys(data.sensor).length > 0) {
+        updateSensorUI(data.sensor);
+      }
+      
+      // Update network data
+      if (data.network && Object.keys(data.network).length > 0) {
+        updateNetworkUI(data.network);
+      }
+      
+      // Update session status
+      if (data.session) {
+        updateSessionUI(data.session);
+      }
+    } catch (err) {
+      console.warn("Polling error:", err);
+    }
+  }, 2000);
+}
+
+function updateSensorUI(d) {
+  // Ultrasonic
+  if (d.ultrasonic) el('ultrasonic_dist').textContent = fmt(d.ultrasonic.distance, 1);
+  // Vibration
+  if (d.vibration) el('vibration_val').textContent = fmt(d.vibration.value, 3);
+  // DHT-11
+  if (d.temperature !== undefined) el('temperature').textContent = fmt(d.temperature, 1);
+  if (d.humidity    !== undefined) el('humidity').textContent    = fmt(d.humidity, 1) + ' %';
+  // IR sensor
+  if (d.ir !== undefined) {
+    const detected = !!d.ir.detected;
+    el('irLabel').textContent = detected ? '🔴 Presence' : '⚪ No Presence';
+  }
+}
+
+function updateNetworkUI(r) {
+  // Update live param cells
+  el('n_byte_rate').textContent    = fmt(r.byte_rate);
+  el('n_packet_rate').textContent  = fmt(r.packet_rate);
+  el('n_pkt_size_var').textContent = fmt(r.packet_size_variance);
+  el('n_tgap_var').textContent     = fmt(r.time_gap_variance);
+  el('n_tgap_mean').textContent    = fmt(r.time_gap_mean);
+  el('n_pkt_size_mean').textContent= fmt(r.packet_size_mean);
+
+  el('netBadge').textContent = '● Live';
+
+  // Check if this record is already in the table to avoid duplicates
+  // This is simple: just compare IDs or timestamps
+  if (sessionActive && el('dashboardMain').classList.contains('visible') && r.id !== undefined) {
+    const tableRows = el('historyBody').rows;
+    let found = false;
+    for (let i = 0; i < Math.min(tableRows.length, 5); i++) {
+        if (tableRows[i].cells[0].textContent == r.id) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        addTableRow(r, true);
+        const cnt = el('historyBody').rows.length;
+        el('recordCount').textContent = `${cnt} rows`;
+        if (netChart) pushChartPoint(r);
+        
+        sessionCurrent++; // Note: this might be inaccurate with polling if we miss points
+        updateProgress(sessionCurrent, sessionTarget, sessionActive);
+    }
+  }
+}
+
+function updateSessionUI(d) {
+  sessionActive  = d.active;
+  sessionTarget  = d.target;
+  sessionCurrent = d.current;
+  
+  if (el('dashboardMain').classList.contains('visible')) {
+    updateProgress(d.current, d.target, d.active);
+  }
+}
+
 // ─── On load: check for existing session ─────────────
 window.addEventListener('DOMContentLoaded', async () => {
   const res  = await fetch('/api/session/status');
@@ -311,4 +398,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     sessionCurrent = data.current;
     showDashboard();
   }
+  
+  // Start polling regardless of Socket.IO connection status
+  startPolling();
 });
